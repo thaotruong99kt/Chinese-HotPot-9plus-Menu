@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Order Screen — Chinese HotPot 9plus</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f0ebe5; min-height: 100vh; }
+
+  .topbar { background: #c0392b; color: #fff; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-size: 18px; font-weight: 700; }
+  .topbar .live { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .main { padding: 16px; max-width: 900px; margin: 0 auto; }
+  .empty-state { text-align: center; padding: 60px 20px; color: #aaa; font-size: 15px; }
+
+  .order-card { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 14px; border: 1.5px solid #f0ebe5; transition: border-color .2s; }
+  .order-card.is-new { border-color: #e74c3c; }
+  .order-card.is-editing { border-color: #f39c12; }
+  .order-card.is-printed { opacity: 0.55; border-color: #ddd; }
+
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .card-title { font-size: 16px; font-weight: 700; color: #222; }
+  .card-time { font-size: 12px; color: #aaa; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; margin-left: 8px; }
+  .badge-new { background: #fdf0ef; color: #c0392b; border: 1px solid #e74c3c; }
+  .badge-edited { background: #fef9e7; color: #d68910; border: 1px solid #f39c12; }
+  .badge-printed { background: #f0f0f0; color: #999; border: 1px solid #ddd; }
+
+  .item-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f5f0eb; }
+  .item-row:last-child { border-bottom: none; }
+  .item-name { flex: 1; }
+  .item-name-zh { font-size: 14px; font-weight: 600; color: #222; }
+  .item-name-pl { font-size: 11px; color: #999; }
+  .item-opt { font-size: 11px; color: #e67e22; margin-top: 2px; }
+  .qty-btn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid #ddd; background: #f9f9f9; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #555; transition: all .15s; }
+  .qty-btn:hover { background: #eee; }
+  .qty-btn.del { background: #fdf0ef; border-color: #e74c3c; color: #c0392b; font-size: 13px; }
+  .qty-num { font-size: 16px; font-weight: 700; min-width: 24px; text-align: center; color: #222; }
+
+  .note-row { margin-top: 10px; }
+  .note-input { width: 100%; border: 1px solid #e0d8d0; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #333; background: #faf8f5; }
+  .note-input:focus { outline: none; border-color: #c0392b; }
+
+  .card-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .btn { flex: 1; padding: 10px; border-radius: 10px; border: none; font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity .2s; }
+  .btn:hover { opacity: 0.85; }
+  .btn-print { background: #c0392b; color: #fff; }
+  .btn-done { background: #ecf0f1; color: #555; }
+  .btn-reprint { background: #f0ebe5; color: #888; font-size: 12px; }
+
+  /* PRINT — ẩn dashboard, chỉ hiện #print-area */
+  /* no print styles needed - uses popup window */
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>&#127859; 点餐系统 Order Screen</h1>
+  <div class="live"><div class="dot"></div> Realtime</div>
+</div>
+
+<div class="main">
+  <div id="orders-container"><div class="empty-state">暂无新订单 No new orders... &#128516;</div></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+import { getDatabase, ref, onValue, update, set } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDbRcPIJ9R1nQYnp_FXIjE-jrMFe4Bu060",
+  authDomain: "chinese-hotpot-9plus.firebaseapp.com",
+  databaseURL: "https://chinese-hotpot-9plus-default-rtdb.firebaseio.com",
+  projectId: "chinese-hotpot-9plus",
+  storageBucket: "chinese-hotpot-9plus.firebasestorage.app",
+  messagingSenderId: "85852758660",
+  appId: "1:85852758660:web:a7b99980faba17d39e18d1"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+let ordersData = {};
+let knownOrderIds = new Set();
+let isFirstLoad = true;
+
+// Request notification permission
+if ('Notification' in window) Notification.requestPermission();
+
+// Beep sound — Chrome requires user gesture to unlock AudioContext
+// We unlock it on first click anywhere
+let audioCtx = null;
+function unlockAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+document.addEventListener('click', unlockAudio, { once: false });
+
+function playBeep() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    [0, 0.2, 0.4].forEach(delay => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + delay + 0.3);
+      osc.start(audioCtx.currentTime + delay);
+      osc.stop(audioCtx.currentTime + delay + 0.3);
+    });
+  } catch(e) { console.warn('Audio error:', e); }
+}
+
+// Show toast notification on screen
+function showNewOrderToast(order) {
+  const existing = document.getElementById('order-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'order-toast';
+  toast.style.cssText = `position:fixed;top:70px;right:16px;background:#c0392b;color:#fff;
+    padding:14px 18px;border-radius:12px;font-size:14px;font-weight:700;z-index:999;
+    box-shadow:0 4px 16px rgba(0,0,0,0.25);cursor:pointer;max-width:280px;`;
+  toast.innerHTML = `🔔 新订单！${order.table}<br><span style="font-size:12px;font-weight:400;opacity:.9;">New order / Nowe zamówienie</span>`;
+  toast.onclick = () => toast.remove();
+  document.body.appendChild(toast);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+
+  // Browser notification
+  if (Notification.permission === 'granted') {
+    new Notification('🔔 新订单 New Order', {
+      body: `${order.table} — ${order.items?.length || 0} món`,
+      icon: '🍲'
+    });
+  }
+}
+
+onValue(ref(db, 'orders'), snap => {
+  ordersData = snap.val() || {};
+
+  // Detect new orders (skip on first load)
+  if (!isFirstLoad) {
+    Object.entries(ordersData).forEach(([id, order]) => {
+      if (!knownOrderIds.has(id) && order.status === 'new') {
+        playBeep();
+        showNewOrderToast(order);
+      }
+    });
+  }
+  knownOrderIds = new Set(Object.keys(ordersData));
+  isFirstLoad = false;
+
+  renderOrders();
+});
+
+// ── Auto clear orders + sessions at 22:00 every day ──
+function scheduleAutoClear() {
+  const now = new Date();
+  const target = new Date();
+  target.setHours(22, 0, 0, 0);
+  if (now >= target) target.setDate(target.getDate() + 1); // already past 10PM → next day
+  const ms = target - now;
+  const hh = Math.floor(ms / 3600000);
+  const mm = Math.floor((ms % 3600000) / 60000);
+  console.log(`Auto-clear scheduled in ${hh}h ${mm}m (at 22:00)`);
+
+  setTimeout(async () => {
+    await set(ref(db, 'orders'), {});
+    await set(ref(db, 'table_sessions'), {});
+    console.log('Auto-cleared at 22:00');
+    scheduleAutoClear();
+  }, ms);
+}
+scheduleAutoClear();
+
+function renderOrders() {
+  const container = document.getElementById('orders-container');
+  const newOrders = Object.entries(ordersData)
+    .filter(([_, o]) => o.status !== 'done')
+    .sort((a, b) => a[1].time - b[1].time);
+
+  if (newOrders.length === 0) {
+    container.innerHTML = '<div class="empty-state">暂无新订单 No new orders... &#128516;</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  newOrders.forEach(([id, order]) => {
+    container.appendChild(buildCard(id, order));
+  });
+}
+
+function buildCard(id, order) {
+  const card = document.createElement('div');
+  const statusClass = order.status === 'printed' ? 'is-printed' : order.status === 'editing' ? 'is-editing' : 'is-new';
+  card.className = 'order-card ' + statusClass;
+  card.id = 'card-' + id;
+
+  const badgeClass = order.status === 'printed' ? 'badge-printed' : order.status === 'editing' ? 'badge-edited' : 'badge-new';
+  const badgeText = order.status === 'printed' ? '已打印 Printed' : order.status === 'editing' ? '已修改 Edited' : '新订单 New';
+  const time = new Date(order.time).toLocaleTimeString('vi', { hour: '2-digit', minute: '2-digit' });
+
+  let itemsHTML = '';
+  (order.items || []).forEach((item, idx) => {
+    if (!item || item.qty === 0) return;
+    let optText = '';
+    if (item.options) {
+      const spicyMapDash = { mild: '微辣/Mild', medium: '中辣/Medium', hot: '重辣/Very spicy' };
+      optText = Object.entries(item.options).map(([k, v]) => {
+        if (k === 'spicy_level') return `"${spicyMapDash[v] || v}"`;
+        if (k === 'meats_note') return `"${v}"`;
+        if (k === 'dual_soup') return Array.isArray(v) ? v.join('+') : String(v);
+        if (Array.isArray(v)) return v.join('+');
+        return null;
+      }).filter(Boolean).join(' · ');
+    }
+    itemsHTML += `
+      <div class="item-row" id="row-${id}-${idx}">
+        <div class="item-name">
+          <div class="item-name-zh">
+            <span style="color:#bbb;font-size:11px;margin-right:4px;">${item.code || ''}</span>${item.name_zh || ''}
+            <span style="font-size:11px;color:#999;font-weight:400;margin-left:6px;">${item.name_pl || ''}</span>
+          </div>
+          ${optText ? `<div class="item-opt" style="padding-left:4px;">${optText}</div>` : ''}
+        </div>
+        <button class="qty-btn del" onclick="removeItem('${id}', ${idx})" title="Delete">✕</button>
+        <button class="qty-btn" onclick="editQty('${id}', ${idx}, -1)">−</button>
+        <span class="qty-num" id="qty-${id}-${idx}">${item.qty}</span>
+        <button class="qty-btn" onclick="editQty('${id}', ${idx}, 1)">+</button>
+      </div>`;
+  });
+
+  const prefix = order.bill_prefix || (order.menu_type === 'standard' ? 'B' : 'A');
+  const prefixColor = prefix === 'B' ? '#2980b9' : '#c0392b';
+  const menuLabel = prefix === 'B' ? '单点 Standard' : '自助 Buffet';
+
+  const isPrinted = order.status === 'printed';
+  card.innerHTML = `
+    <div class="card-header">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:22px;font-weight:900;color:${prefixColor};line-height:1;">${prefix}</span>
+        <span class="card-title">${order.table} — 第${order.bill_number || 1}单</span>
+        <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:${prefixColor}22;color:${prefixColor};font-weight:600;">${menuLabel}</span>
+        <span class="badge ${badgeClass}" id="badge-${id}">${badgeText}</span>
+      </div>
+      <span class="card-time">${time}</span>
+    </div>
+    <div id="items-${id}">${itemsHTML}</div>
+    <div class="card-actions" style="margin-top:12px;">
+      ${isPrinted
+        ? `<button class="btn btn-reprint" onclick="printBill('${id}')">重新打印 Reprint</button>
+           <button class="btn btn-done" onclick="markDone('${id}')">完成 Done</button>`
+        : `<button class="btn btn-print" onclick="printBill('${id}')" style="background:${prefixColor};">&#128438; 打印 Print</button>
+           <button class="btn btn-done" onclick="markDone('${id}')">完成 Done</button>`
+      }
+    </div>`;
+  return card;
+}
+
+// Edit qty locally + mark edited in Firebase
+window.editQty = function(orderId, itemIdx, delta) {
+  const order = JSON.parse(JSON.stringify(ordersData[orderId]));
+  const item = order.items[itemIdx];
+  if (!item) return;
+  item.qty = Math.max(0, item.qty + delta);
+  if (item.qty === 0) { order.items.splice(itemIdx, 1); }
+  order.status = 'editing';
+  update(ref(db, `orders/${orderId}`), { items: order.items, status: 'editing' });
+};
+
+window.removeItem = function(orderId, itemIdx) {
+  const order = JSON.parse(JSON.stringify(ordersData[orderId]));
+  order.items.splice(itemIdx, 1);
+  update(ref(db, `orders/${orderId}`), { items: order.items, status: 'editing' });
+};
+
+window.markEdited = function(orderId, noteVal) {
+  update(ref(db, `orders/${orderId}`), { note: noteVal, status: 'editing' });
+};
+
+window.printBill = function(orderId) {
+  const order = ordersData[orderId];
+  if (!order) return;
+
+  const spicyMap = { mild: '微辣/Mild', medium: '中辣/Medium', hot: '重辣/Very spicy' };
+
+  const prefix = order.bill_prefix || (order.menu_type === 'standard' ? 'B' : 'A');
+  const prefixColor = prefix === 'B' ? '#2980b9' : '#c0392b';
+
+  const rows = (order.items || []).filter(i => i && i.qty > 0).map(i => {
+    let optParts = [];
+    if (i.options) {
+      Object.entries(i.options).forEach(([k, v]) => {
+        if (k === 'spicy_level') optParts.push(`"${spicyMap[v] || v}"`);
+        else if (k === 'meats_note') optParts.push(`"${v}"`);
+        else if (k === 'dual_soup') optParts.push(Array.isArray(v) ? v.join('+') : String(v));
+        // skip raw 'meats' array — already in meats_note
+      });
+    }
+    const optText = optParts.filter(Boolean).join(' · ');
+    const fullLine = `<b>[${i.code || ''}]</b> <b>${i.name_zh || ''}</b> <span style="color:#555;">${i.name_pl || ''}</span>${optText ? ` <span style="color:#c0392b;">${optText}</span>` : ''}`;
+    return `<tr>
+      <td style="width:82%;padding:3px 3px 3px 0;border-bottom:0.5px solid #ccc;word-break:break-word;font-size:9pt;">${fullLine}</td>
+      <td style="text-align:right;width:18%;padding:3px 0;border-bottom:0.5px solid #ccc;vertical-align:top;font-weight:bold;font-size:9pt;white-space:nowrap;">x${i.qty}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+@page { size: 80mm auto; margin: 3mm; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif; width: 74mm; font-size: 9pt; }
+table { width: 100%; border-collapse: collapse; }
+</style></head><body>
+<div style="text-align:center;font-size:22pt;font-weight:900;color:${prefixColor};line-height:1.1;">${prefix}</div>
+<div style="text-align:center;font-weight:bold;font-size:10pt;margin:2px 0;">${order.table} — 第${order.bill_number || 1}单</div>
+<div style="text-align:center;font-size:7pt;color:#888;margin:0 0 4px;">${new Date(order.time).toLocaleString('en-GB')}</div>
+<hr style="border:none;border-top:0.5px solid #999;margin:3px 0;">
+<table>${rows}</table>
+</body></html>`;
+
+  const win = window.open('', '_blank', 'width=320,height=400');
+  win.document.write(html);
+  win.document.close();
+  win.onload = () => { win.print(); };
+
+  update(ref(db, `orders/${orderId}`), { status: 'printed' });
+};
+
+window.markDone = function(orderId) {
+  update(ref(db, `orders/${orderId}`), { status: 'done' });
+};
+</script>
+</body>
+</html>
