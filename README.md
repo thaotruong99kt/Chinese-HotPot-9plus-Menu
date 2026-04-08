@@ -117,12 +117,13 @@ All customer-facing UI and printed bills are displayed in **3 languages**:
 
 ---
 
-## 📊 Results
+## 📊 Estimated Results
+⚠️ Figures below are projections based on observed workflow before deployment.
 | Metric | Before | After |
 |---|---|---|
-| Time to take one table's order | ~5–8 min | ~1 min (self-serve) |
+| Time to take one table's order | ~15 mins | ~5 mins |
 | Staff verbal explanation per table | Required every time | Eliminated |
-| Front-of-house workload | High during peak hours | Reduced by ~80% |
+| Front-of-house workload | High during peak hours | Reduced by ~50% |
 
 ---
 
